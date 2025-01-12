@@ -18,6 +18,7 @@ namespace MyDapperExtension
             RowNumOracle = 1,
             OffsetFetch = 2,
             Limit = 3,
+            Sqlite = 4,
         }
 
         struct DbSettingItem
@@ -25,7 +26,6 @@ namespace MyDapperExtension
             public bool NamedParameterSupport;
             public string ParameterMarker;
             public DbPagingType PagingType;
-            
         }
 
         public static string DefaultParameterNameFormat = "@{0}";
@@ -37,6 +37,7 @@ namespace MyDapperExtension
                 [DbPagingType.RowNumOracle] = PagingMethod_RowNumOracle,
                 [DbPagingType.OffsetFetch] = PagingMethod_OffsetFetch,
                 [DbPagingType.Limit] = PagingMethod_Limit,
+                [DbPagingType.Sqlite] = PagingMethod_Sqlite,
             };
 
         private static readonly Regex regex = new Regex(@"order\s+by", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -72,6 +73,12 @@ namespace MyDapperExtension
             return sql + $" limit {offset},{pageSize}";
         }
 
+        private static string PagingMethod_Sqlite(string sql, int pageSize, int pageNum)
+        {
+            int offset = (pageNum - 1) * pageSize;
+            return sql + $" limit {pageSize} offset {offset}";
+        }
+
         private static DbPagingType MeasureDbPagingType(string product, string version)
         {
             product = product.ToLower();
@@ -105,6 +112,11 @@ namespace MyDapperExtension
             if (product.Contains("mysql"))
             {
                 return DbPagingType.Limit;
+            }
+
+            if (product.Contains("sqlite"))
+            {
+                return DbPagingType.Sqlite;
             }
 
             return DbPagingType.None;

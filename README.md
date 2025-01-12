@@ -73,6 +73,10 @@ P_uid就会变成Oracle规则的 ":uid"
 
 对于MySql只支持了Limit一种分页方式
 
+### Sqlite
+
+对于Sqlite只支持Limit Offset分页方式
+
 ### 其他数据库
 
 不支持其他数据库（测试环境只装有3种数据库），如果要支持目前可通过直接修改MeasureDbPagingType，以及添加DbPagingType及DbPagingFunc来支持。
