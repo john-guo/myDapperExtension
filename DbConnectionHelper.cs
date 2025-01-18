@@ -6,7 +6,11 @@ using System.Configuration;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
+using System.Reflection.Metadata;
+using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Windows.Media;
+using static MyDapperExtension.DbConnectionHelper;
 
 namespace MyDapperExtension
 {
@@ -31,7 +35,7 @@ namespace MyDapperExtension
         public static string DefaultParameterNameFormat = "@{0}";
 
         private static readonly ConcurrentDictionary<string, DbSettingItem> DbSettings = new ConcurrentDictionary<string, DbSettingItem>();
-        private static readonly Dictionary<DbPagingType, Func<string, int, int, string>> 
+        private static readonly Dictionary<DbPagingType, Func<string, int, int, string>>
             DbPagingFunc = new Dictionary<DbPagingType, Func<string, int, int, string>>()
             {
                 [DbPagingType.RowNumOracle] = PagingMethod_RowNumOracle,
@@ -52,10 +56,10 @@ namespace MyDapperExtension
             " SELECT A.*, rownum r__ " +
             " FROM " +
             " ( " +
-            sql + 
+            sql +
             " ) A " +
-            $" WHERE rownum < {upper} " + 
-            " ) B " +
+            $" WHERE rownum < {upper} " +
+        " ) B " +
             $" WHERE r__ >= {lower}";
         }
 
@@ -87,7 +91,8 @@ namespace MyDapperExtension
             try
             {
                 major = int.Parse(version.Split('.')[0]);
-            } catch { }
+            }
+            catch { }
 
             if (product.Contains("oracle"))
             {
@@ -141,22 +146,48 @@ namespace MyDapperExtension
             };
         }
 
-        private static void InitConnectionParameterMarker(this DbConnection connection)
+        private static void InitConnectionParameterMarker(this DbConnection connection, string providerName)
         {
             if (DbSettings.ContainsKey(connection.ConnectionString))
                 return;
 
+            if (providerName.ToLower().Contains("sqlite"))
+            {
+                DbSettings[connection.ConnectionString] = new DbSettingItem
+                {
+                    ParameterMarker = DefaultParameterNameFormat,
+                    NamedParameterSupport = true,
+                    PagingType = DbPagingType.Sqlite
+                };
+                return;
+            }
+
             DbSettings[connection.ConnectionString] = connection.MeasureDbSetting();
         }
 
+        public static void EnsureProvider(string providerName, string assemblyFile)
+        {
+            if (DbProviderFactories.GetProviderInvariantNames().Any(name => name.Equals(providerName, StringComparison.InvariantCultureIgnoreCase)))
+                return;
+            var assembly = Assembly.LoadFrom(assemblyFile);
+            var factoryType = assembly.GetExportedTypes().FirstOrDefault(t => t.IsSubclassOf(typeof(DbProviderFactory))) ?? throw new InvalidOperationException($"Cannot find provider factory for {providerName}.");
+            DbProviderFactories.RegisterFactory(providerName, factoryType);
+        }
+
+        public static DbConnection OpenDbConnection(string providerName, string connectionString)
+        {
+            var factory = DbProviderFactories.GetFactory(providerName);
+            var connection = factory.CreateConnection() ?? throw new ArgumentException($"{providerName} create connection failed", nameof(providerName));
+            connection.ConnectionString = connectionString;
+            connection.Open();
+            connection.InitConnectionParameterMarker(providerName);
+            return connection;
+        }
+
+
         public static DbConnection OpenDbConnection(string configName)
         {
-            var factory = DbProviderFactories.GetFactory(ConfigurationManager.ConnectionStrings[configName].ProviderName);
-            var connection = factory.CreateConnection();
-            connection.ConnectionString = ConfigurationManager.ConnectionStrings[configName].ConnectionString;
-            connection.Open();
-            connection.InitConnectionParameterMarker();
-            return connection;
+            return OpenDbConnection(ConfigurationManager.ConnectionStrings[configName].ProviderName, ConfigurationManager.ConnectionStrings[configName].ConnectionString);
         }
 
         public static string GetPName(this DbConnection connection, string parameterName)
