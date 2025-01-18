@@ -6,11 +6,10 @@ using System.Configuration;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
-using System.Reflection.Metadata;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using System.Windows.Media;
 using static MyDapperExtension.DbConnectionHelper;
+using System.Threading.Tasks;
 
 namespace MyDapperExtension
 {
@@ -127,9 +126,8 @@ namespace MyDapperExtension
             return DbPagingType.None;
         }
 
-        private static DbSettingItem MeasureDbSetting(this DbConnection connection)
+        private static DbSettingItem MeasureDbSetting(DataTable schema)
         {
-            var schema = connection.GetSchema(DbMetaDataCollectionNames.DataSourceInformation);
             var pattern = schema.Rows[0][DbMetaDataColumnNames.ParameterMarkerPattern] as string;
             var len = (int)schema.Rows[0][DbMetaDataColumnNames.ParameterNameMaxLength];
             pattern = pattern.TrimStart(' ', '(', '\\');
@@ -146,10 +144,16 @@ namespace MyDapperExtension
             };
         }
 
-        private static void InitConnectionParameterMarker(this DbConnection connection, string providerName)
+        private static DbSettingItem MeasureDbSetting(this DbConnection connection)
+        {
+            var schema = connection.GetSchema(DbMetaDataCollectionNames.DataSourceInformation);
+            return MeasureDbSetting(schema);
+        }
+
+        private static bool IsNeedMeasureDbSetting(this DbConnection connection, string providerName)
         {
             if (DbSettings.ContainsKey(connection.ConnectionString))
-                return;
+                return false;
 
             if (providerName.ToLower().Contains("sqlite"))
             {
@@ -159,19 +163,17 @@ namespace MyDapperExtension
                     NamedParameterSupport = true,
                     PagingType = DbPagingType.Sqlite
                 };
-                return;
+                return false;
             }
-
-            DbSettings[connection.ConnectionString] = connection.MeasureDbSetting();
+            return true;
         }
 
-        public static void EnsureProvider(string providerName, string assemblyFile)
+        private static void InitConnectionParameterMarker(this DbConnection connection, string providerName)
         {
-            if (DbProviderFactories.GetProviderInvariantNames().Any(name => name.Equals(providerName, StringComparison.InvariantCultureIgnoreCase)))
+            if (!connection.IsNeedMeasureDbSetting(providerName))
                 return;
-            var assembly = Assembly.LoadFrom(assemblyFile);
-            var factoryType = assembly.GetExportedTypes().FirstOrDefault(t => t.IsSubclassOf(typeof(DbProviderFactory))) ?? throw new InvalidOperationException($"Cannot find provider factory for {providerName}.");
-            DbProviderFactories.RegisterFactory(providerName, factoryType);
+
+            DbSettings[connection.ConnectionString] = connection.MeasureDbSetting();
         }
 
         public static DbConnection OpenDbConnection(string providerName, string connectionString)
@@ -184,6 +186,20 @@ namespace MyDapperExtension
             return connection;
         }
 
+        public static async Task<DbConnection> OpenDbConnectionAsync(string providerName, string connectionString)
+        {
+            var factory = DbProviderFactories.GetFactory(providerName);
+            var connection = factory.CreateConnection() ?? throw new ArgumentException($"{providerName} create connection failed", nameof(providerName));
+            connection.ConnectionString = connectionString;
+            await connection.OpenAsync();
+            connection.InitConnectionParameterMarker(providerName);
+            return connection;
+        }
+
+        public static async Task<DbConnection> OpenDbConnectionAsync(string configName)
+        {
+            return await OpenDbConnectionAsync(ConfigurationManager.ConnectionStrings[configName].ProviderName, ConfigurationManager.ConnectionStrings[configName].ConnectionString);
+        }
 
         public static DbConnection OpenDbConnection(string configName)
         {
@@ -221,6 +237,16 @@ namespace MyDapperExtension
         public static IEnumerable<dynamic> Paging(this DbConnection connection, string sql, int pageSize, int pageNum, object param = null, IDbTransaction transaction = null, bool buffered = true, int? commandTimeout = null, CommandType? commandType = null)
         {
             return connection.Query(connection.GetPagingSql(sql, pageSize, pageNum), param, transaction, buffered, commandTimeout, commandType);
+        }
+
+        public static async Task<IEnumerable<T>> PagingAsync<T>(this DbConnection connection, string sql, int pageSize, int pageNum, object param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null)
+        {
+            return await connection.QueryAsync<T>(connection.GetPagingSql(sql, pageSize, pageNum), param, transaction, commandTimeout, commandType);
+        }
+
+        public static async Task<IEnumerable<dynamic>> PagingAsync(this DbConnection connection, string sql, int pageSize, int pageNum, object param = null, IDbTransaction transaction = null, int? commandTimeout = null, CommandType? commandType = null)
+        {
+            return await connection.QueryAsync(connection.GetPagingSql(sql, pageSize, pageNum), param, transaction, commandTimeout, commandType);
         }
     }
 }
